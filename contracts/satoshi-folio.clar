@@ -272,3 +272,49 @@
     (ok true)
   )
 )
+
+(define-public (modify-asset-allocation
+    (portfolio-id uint)
+    (asset-index uint)
+    (new-allocation-bps uint)
+  )
+  (let (
+      (portfolio (unwrap! (get-portfolio-details portfolio-id) ERR-PORTFOLIO-NOT-FOUND))
+      (current-asset (unwrap! (get-asset-allocation portfolio-id asset-index)
+        ERR-INVALID-TOKEN-CONTRACT
+      ))
+      (portfolio-owner (get owner portfolio))
+    )
+    ;; Permission & Validation Checks
+    (asserts! (is-eq tx-sender portfolio-owner) ERR-UNAUTHORIZED-ACCESS)
+    (asserts! (validate-allocation-percentage new-allocation-bps)
+      ERR-INVALID-ALLOCATION
+    )
+    (asserts! (validate-asset-index portfolio-id asset-index)
+      ERR-TOKEN-INDEX-INVALID
+    )
+
+    ;; Update Asset Allocation
+    (map-set AssetAllocations {
+      portfolio-id: portfolio-id,
+      asset-index: asset-index,
+    }
+      (merge current-asset { target-allocation-bps: new-allocation-bps })
+    )
+
+    (ok true)
+  )
+)
+
+;; PROTOCOL ADMINISTRATION
+
+(define-public (transfer-protocol-ownership (new-administrator principal))
+  (begin
+    (asserts! (is-eq tx-sender (var-get protocol-administrator))
+      ERR-UNAUTHORIZED-ACCESS
+    )
+    (asserts! (not (is-eq new-administrator tx-sender)) ERR-UNAUTHORIZED-ACCESS)
+    (var-set protocol-administrator new-administrator)
+    (ok true)
+  )
+)
