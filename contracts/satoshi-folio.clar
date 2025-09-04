@@ -85,3 +85,90 @@
   principal
   (list 20 uint)
 )
+
+;; READ-ONLY FUNCTIONS - PORTFOLIO QUERIES
+
+(define-read-only (get-portfolio-details (portfolio-id uint))
+  (map-get? PortfolioRegistry portfolio-id)
+)
+
+(define-read-only (get-asset-allocation
+    (portfolio-id uint)
+    (asset-index uint)
+  )
+  (map-get? AssetAllocations {
+    portfolio-id: portfolio-id,
+    asset-index: asset-index,
+  })
+)
+
+(define-read-only (get-user-portfolio-list (user principal))
+  (default-to (list) (map-get? UserPortfolioIndex user))
+)
+
+(define-read-only (calculate-portfolio-health (portfolio-id uint))
+  (let (
+      (portfolio (unwrap! (get-portfolio-details portfolio-id) ERR-PORTFOLIO-NOT-FOUND))
+      (blocks-since-rebalance (- stacks-block-height (get last-rebalance-block portfolio)))
+      (total-value (get total-portfolio-value portfolio))
+    )
+    (ok {
+      portfolio-id: portfolio-id,
+      current-value: total-value,
+      requires-rebalancing: (>= blocks-since-rebalance REBALANCE-COOLDOWN),
+      blocks-until-next-rebalance: (if (>= blocks-since-rebalance REBALANCE-COOLDOWN)
+        u0
+        (- REBALANCE-COOLDOWN blocks-since-rebalance)
+      ),
+    })
+  )
+)
+
+(define-read-only (get-protocol-stats)
+  {
+    total-portfolios: (var-get next-portfolio-id),
+    management-fee-bps: (var-get management-fee-bps),
+    max-assets-per-portfolio: MAX-PORTFOLIO-ASSETS,
+    rebalance-frequency-blocks: REBALANCE-COOLDOWN,
+  }
+)
+
+;; PRIVATE UTILITY FUNCTIONS
+
+(define-private (validate-asset-index
+    (portfolio-id uint)
+    (asset-index uint)
+  )
+  (let (
+      (portfolio (unwrap! (get-portfolio-details portfolio-id) false))
+      (asset-count (get asset-count portfolio))
+    )
+    (and
+      (< asset-index MAX-PORTFOLIO-ASSETS)
+      (< asset-index asset-count)
+    )
+  )
+)
+
+(define-private (validate-allocation-percentage (percentage uint))
+  (and (>= percentage u0) (<= percentage PERCENTAGE-BASIS))
+)
+
+(define-private (validate-total-allocation (allocations (list 10 uint)))
+  (is-eq (fold + allocations u0) PERCENTAGE-BASIS)
+)
+
+(define-private (register-user-portfolio
+    (user principal)
+    (portfolio-id uint)
+  )
+  (let (
+      (existing-portfolios (get-user-portfolio-list user))
+      (updated-portfolios (unwrap! (as-max-len? (append existing-portfolios portfolio-id) u20)
+        ERR-USER-REGISTRY-FAILED
+      ))
+    )
+    (map-set UserPortfolioIndex user updated-portfolios)
+    (ok true)
+  )
+)
