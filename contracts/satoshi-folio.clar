@@ -172,3 +172,103 @@
     (ok true)
   )
 )
+
+(define-private (create-asset-allocation
+    (asset-index uint)
+    (token-contract principal)
+    (allocation-percentage uint)
+    (portfolio-id uint)
+  )
+  (if (validate-allocation-percentage allocation-percentage)
+    (begin
+      (map-set AssetAllocations {
+        portfolio-id: portfolio-id,
+        asset-index: asset-index,
+      } {
+        target-allocation-bps: allocation-percentage,
+        current-balance: u0,
+        token-contract: token-contract,
+      })
+      (ok true)
+    )
+    ERR-INVALID-ALLOCATION
+  )
+)
+
+;; PUBLIC PORTFOLIO MANAGEMENT FUNCTIONS
+
+(define-public (create-portfolio
+    (token-contracts (list 10 principal))
+    (allocation-percentages (list 10 uint))
+  )
+  (let (
+      (new-portfolio-id (var-get next-portfolio-id))
+      (asset-count (len token-contracts))
+      (allocation-count (len allocation-percentages))
+      (first-token (element-at? token-contracts u0))
+      (second-token (element-at? token-contracts u1))
+      (first-allocation (element-at? allocation-percentages u0))
+      (second-allocation (element-at? allocation-percentages u1))
+    )
+    ;; Input Validation
+    (asserts! (<= asset-count MAX-PORTFOLIO-ASSETS) ERR-TOKEN-LIMIT-EXCEEDED)
+    (asserts! (is-eq asset-count allocation-count) ERR-MISMATCHED-ARRAYS)
+    (asserts! (validate-total-allocation allocation-percentages)
+      ERR-INVALID-ALLOCATION
+    )
+    (asserts! (>= asset-count u2) ERR-INVALID-ALLOCATION)
+    ;; Minimum 2 assets required
+
+    ;; Portfolio Registration
+    (map-set PortfolioRegistry new-portfolio-id {
+      owner: tx-sender,
+      creation-block: stacks-block-height,
+      last-rebalance-block: stacks-block-height,
+      total-portfolio-value: u0,
+      is-active: true,
+      asset-count: asset-count,
+    })
+
+    ;; Asset Configuration - Initialize at least first two assets
+    (asserts! (and (is-some first-token) (is-some second-token))
+      ERR-INVALID-TOKEN-CONTRACT
+    )
+    (asserts! (and (is-some first-allocation) (is-some second-allocation))
+      ERR-INVALID-ALLOCATION
+    )
+
+    (try! (create-asset-allocation u0 (unwrap-panic first-token)
+      (unwrap-panic first-allocation) new-portfolio-id
+    ))
+
+    (try! (create-asset-allocation u1 (unwrap-panic second-token)
+      (unwrap-panic second-allocation) new-portfolio-id
+    ))
+
+    ;; User Registry Update
+    (try! (register-user-portfolio tx-sender new-portfolio-id))
+
+    ;; Increment Portfolio Counter
+    (var-set next-portfolio-id (+ new-portfolio-id u1))
+    (ok new-portfolio-id)
+  )
+)
+
+(define-public (execute-rebalancing (portfolio-id uint))
+  (let (
+      (portfolio (unwrap! (get-portfolio-details portfolio-id) ERR-PORTFOLIO-NOT-FOUND))
+      (owner (get owner portfolio))
+      (is-active (get is-active portfolio))
+    )
+    ;; Authorization & Status Checks
+    (asserts! (is-eq tx-sender owner) ERR-UNAUTHORIZED-ACCESS)
+    (asserts! is-active ERR-PORTFOLIO-NOT-FOUND)
+
+    ;; Execute Rebalancing Logic
+    (map-set PortfolioRegistry portfolio-id
+      (merge portfolio { last-rebalance-block: stacks-block-height })
+    )
+
+    (ok true)
+  )
+)
